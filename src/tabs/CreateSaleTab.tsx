@@ -5,6 +5,8 @@ import { Msg, parseAddr, toUnits, useApp, useAsync } from '../lib/app'
 import {
   addrHashKey,
   buildSaleStateInit,
+  deployerDoSalePayload,
+  GETGEMS_DEPLOYER,
   emptyJettonDict,
   newKeyPair,
   nftTransferBody,
@@ -73,7 +75,7 @@ export function CreateSaleTab({ nft, onCreated }: { nft: string; onCreated: () =
   }
   const [royaltyAddr, setRoyaltyAddr] = useState('')
   const [royaltyPct, setRoyaltyPct] = useState('0')
-  const [deployMode, setDeployMode] = useState<'auto' | 'blank' | 'jetton'>('auto')
+  const [deployMode, setDeployMode] = useState<'deployer' | 'auto' | 'blank' | 'jetton'>('deployer')
   const [withTransfer, setWithTransfer] = useState(true)
 
   const nftInfo = useAsync(async () => {
@@ -93,6 +95,7 @@ export function CreateSaleTab({ nft, onCreated }: { nft: string; onCreated: () =
 
   const selectedJettons = jettons.filter((j) => (jPrices[j.master] ?? '').trim() !== '')
   const mode = deployMode === 'auto' ? (selectedJettons.length ? 'jetton' : 'blank') : deployMode
+  const modeLabel = { deployer: 'через деплойер Getgems', jetton: 'deploy_jetton', blank: 'deploy_blank' }[mode]
   const isOwner = !!(wallet && nftInfo.data?.owner?.equals(wallet))
 
   async function create() {
@@ -111,10 +114,15 @@ export function CreateSaleTab({ nft, onCreated }: { nft: string; onCreated: () =
       throw new Error('deploy_blank не встановлює ціни в жетонах. Оберіть deploy_jetton або додайте їх пізніше через change_price.')
     if (fullTonPrice === 0n && selectedJettons.length === 0) throw new Error('Вкажіть ціну в TON або хоча б в одному жетоні')
 
-    const keyPair = mode === 'jetton' ? await newKeyPair() : null
+    const viaDeployer = mode === 'deployer'
+    const deployer = Address.parse(GETGEMS_DEPLOYER[network])
+    if (viaDeployer && !isOwner) throw new Error('NFT має належати підключеному гаманцю')
+    const keyPair = mode === 'jetton' || viaDeployer ? await newKeyPair() : null
     const { address: sale, init } = buildSaleStateInit({
-      // for deploy_jetton the sender must equal marketplace in data, so the deployer is stored first
-      marketplaceAddress: mode === 'jetton' ? wallet : mp,
+      // deploy_jetton must be sent by the marketplace stored in data: our wallet, or the Getgems deployer
+      marketplaceAddress: viaDeployer ? deployer : mode === 'jetton' ? wallet : mp,
+      // via deployer the NFT is forwarded without ownership_assigned, so the seller is set right away
+      nftOwnerAddress: viaDeployer ? wallet : null,
       nftAddress: nftAddr,
       fullTonPrice,
       feeAddress: fee,
@@ -127,7 +135,7 @@ export function CreateSaleTab({ nft, onCreated }: { nft: string; onCreated: () =
 
     const queryId = randomQueryId()
     let body
-    if (mode === 'jetton' && keyPair) {
+    if (keyPair) {
       const dict = emptyJettonDict()
       for (const j of selectedJettons) {
         const master = Address.parse(j.master)
@@ -139,15 +147,25 @@ export function CreateSaleTab({ nft, onCreated }: { nft: string; onCreated: () =
       body = saleDeployBlankBody(queryId)
     }
 
-    const msgs: Msg[] = [{ to: sale, value: toNano('0.05'), init: stateInitBoc(init), body }]
-    if (withTransfer) {
+    const msgs: Msg[] = viaDeployer
+      ? [{
+          // one message, like getgems.io: NFT → deployer → (deploy sale + forward NFT to it)
+          to: nftAddr,
+          value: toNano('0.25'),
+          body: nftTransferBody({
+            queryId, newOwner: deployer, responseTo: wallet, forwardAmount: toNano('0.2'),
+            rawForwardPayload: deployerDoSalePayload(init, body),
+          }),
+        }]
+      : [{ to: sale, value: toNano('0.05'), init: stateInitBoc(init), body }]
+    if (!viaDeployer && withTransfer) {
       msgs.push({
         to: nftAddr,
         value: toNano('0.1'),
         body: nftTransferBody({ queryId, newOwner: sale, responseTo: wallet, forwardAmount: toNano('0.02') }),
       })
     }
-    const ok = await send(`Створення продажу (${mode === 'jetton' ? 'deploy_jetton' : 'deploy_blank'})`, msgs)
+    const ok = await send(`Створення продажу (${modeLabel})`, msgs)
     if (ok) {
       addSale({ address: fmt(sale), nft: fmt(nftAddr), createdAt: Date.now() })
       onCreated()
@@ -233,18 +251,26 @@ export function CreateSaleTab({ nft, onCreated }: { nft: string; onCreated: () =
 
         <h4>Деплой</h4>
         <div className="row">
-          {(['auto', 'blank', 'jetton'] as const).map((m) => (
+          {(['deployer', 'auto', 'blank', 'jetton'] as const).map((m) => (
             <button key={m} className={`chip ${deployMode === m ? 'active' : ''}`} onClick={() => setDeployMode(m)}>
-              {m === 'auto' ? 'авто' : m === 'blank' ? 'deploy_blank' : 'deploy_jetton'}
+              {m === 'deployer' ? 'деплойер Getgems' : m === 'auto' ? 'напряму (авто)' : m === 'blank' ? 'deploy_blank' : 'deploy_jetton'}
             </button>
           ))}
         </div>
-        <label className="checkbox">
-          <input type="checkbox" checked={withTransfer} onChange={(e) => setWithTransfer(e.target.checked)} />
-          Одразу передати NFT на контракт продажу (2 повідомлення в одній транзакції)
-        </label>
+        {mode === 'deployer' ? (
+          <p className="muted small">
+            Як на getgems.io: одне повідомлення — NFT передається на деплойер Getgems (<Addr a={Address.parse(GETGEMS_DEPLOYER[network])} />)
+            з payload <code>do_sale</code> (state init + підписаний <code>deploy_jetton</code>). Деплойер розгортає продаж і пересилає
+            на нього NFT. Продавець записаний у data одразу, маркетплейсом стає адреса з поля вище. 0.25 TON, надлишок повернеться.
+          </p>
+        ) : (
+          <label className="checkbox">
+            <input type="checkbox" checked={withTransfer} onChange={(e) => setWithTransfer(e.target.checked)} />
+            Одразу передати NFT на контракт продажу (2 повідомлення в одній транзакції)
+          </label>
+        )}
         <Btn disabled={!wallet || !nftAddr} onClick={create}>
-          Створити продаж ({mode === 'jetton' ? 'deploy_jetton' : 'deploy_blank'})
+          Створити продаж ({modeLabel})
         </Btn>
       </Card>
 

@@ -26,6 +26,7 @@
 | Деплой без жетонів | `0x664c0905` deploy_blank | будь-хто | Виставити → deploy_blank |
 | Деплой з цінами в жетонах (підпис) | `0xfb5dbf47` deploy_jetton | marketplace з data | Виставити → deploy_jetton |
 | Ініціалізація | `ownership_assigned` від NFT | NFT | «Одразу передати NFT» / Продажі → Передати NFT |
+| Деплой через деплойер Getgems (як на getgems.io) | NFT transfer → деплойер (`do_sale` 0x0fe0ede) → `deploy_jetton` | продавець | Виставити → «деплойер Getgems» |
 | Купівля за TON | `0` (порожнє тіло) або `2` buy | будь-хто | Продажі → Купити (вибір op) |
 | Купівля за жетони | `transfer_notification` | jetton wallet продажу | Продажі → Купити за X |
 | Повернення жетонів (не той жетон / мало / закрито) | — | контракт | автоматично |

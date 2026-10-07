@@ -7,7 +7,12 @@ import {
   addrHashKey, buildJettonMinter, buildNftSingle, buildSaleStateInit, emptyJettonDict, jettonMintBody,
   jettonTransferBody, newKeyPair, nftTransferBody, relaxedInternal, saleBuyBody, saleCancelBody,
   saleChangePriceBody, saleDeployBlankBody, saleDeployJettonBody, saleEmergencyBody, FIXPRICE_V4R1_CODE,
+  deployerDoSalePayload,
 } from '../src/lib/contracts'
+import { beginCell, contractAddress } from '@ton/core'
+import { compileFunc } from '@ton-community/func-js'
+import { readFileSync } from 'node:fs'
+import { crc32 } from 'node:zlib'
 import { FIXPRICE_V4R1_CODE_HASH_HEX } from '../src/contracts/getgemsCode'
 
 class SandboxApi extends Api {
@@ -203,6 +208,59 @@ describe('fixprice v4r1 demo builders', () => {
     const d32 = await send(market, sale, toNano('0.02'), saleEmergencyBody(4n, 128 + 32, relaxedInternal({ to: market.address, value: 0n })))
     expectTx(d32.transactions, { to: sale, success: false, exitCode: 405 })
   })
+  it('Getgems deployer flow: one NFT transfer deploys and initializes the sale (both deployer versions)', async () => {
+    // v1: compiled code from DeployerLocal.ts (storage = owner address)
+    const v1 = Cell.fromBase64(readFileSync('tests/fixtures/deployer-v1.base64', 'utf8').trim())
+    // v2: sources/deployer/deployer.fc (storage = allowed code hashes dict + owner)
+    const src = (f: string) => readFileSync(`contracts/getgems/${f}`, 'utf8')
+    const compiled = await compileFunc({
+      targets: ['deployer/deployer.fc'],
+      sources: { 'deployer/deployer.fc': src('deployer/deployer.fc'), 'stdlib.fc': src('stdlib.fc'), 'op-codes.fc': src('op-codes.fc') },
+    })
+    if (compiled.status === 'error') throw new Error(compiled.message)
+    const v2 = Cell.fromBase64(compiled.codeBoc)
+
+    for (const [name, code, data] of [
+      ['v1', v1, beginCell().storeAddress(market.address).endCell()],
+      ['v2', v2, beginCell().storeDict(null).storeAddress(market.address).endCell()],
+    ] as const) {
+      const init = { code, data }
+      const deployer = contractAddress(0, init)
+      await send(market, deployer, toNano('0.05'), beginCell().storeUint(1, 32).endCell(), init)
+      if (name === 'v2') {
+        const r = await send(market, deployer, toNano('0.05'), beginCell().storeUint(crc32('add_sale_code_hash'), 32).storeUint(0, 64)
+          .storeBuffer(FIXPRICE_V4R1_CODE.hash()).endCell())
+        expectTx(r.transactions, { to: deployer, success: true })
+      }
+
+      const nft = await mintNft('D' + name)
+      const kp = await newKeyPair()
+      const { address: sale, init: saleInit } = buildSaleStateInit({
+        marketplaceAddress: deployer, nftAddress: nft, nftOwnerAddress: seller.address, fullTonPrice: toNano('1'),
+        feeAddress: feeWallet.address, feePercent: 5, royaltyAddress: seller.address, royaltyPercent: 10,
+        publicKey: kp.publicKey, createdAt: Math.floor(Date.now() / 1000),
+      })
+      const dict = emptyJettonDict()
+      dict.set(addrHashKey(await api.getJettonWallet(jettonMaster, sale)), { price: 7n, jettonMaster })
+      const body = saleDeployJettonBody({ queryId: 1n, newMarketplace: market.address, jettonDict: dict, secretKey: kp.secretKey })
+      const r = await send(seller, nft, toNano('0.25'), nftTransferBody({
+        queryId: 11n, newOwner: deployer, responseTo: seller.address, forwardAmount: toNano('0.2'),
+        rawForwardPayload: deployerDoSalePayload(saleInit, body),
+      }))
+      expectTx(r.transactions, { to: deployer, success: true })
+      expectTx(r.transactions, { from: deployer, to: sale, success: true, value: toNano('0.02') })
+
+      const d = await api.getSaleData(sale)
+      expect(d.marketplaceAddress.equals(market.address)).toBe(true)
+      expect(d.nftOwnerAddress?.equals(seller.address)).toBe(true)
+      expect(d.jettonPrices).toHaveLength(1)
+      expect((await api.getNftData(nft)).owner?.equals(sale)).toBe(true)
+
+      await send(buyer, sale, toNano('1.1'), saleBuyBody('op2', 1n))
+      expect((await api.getNftData(nft)).owner?.equals(buyer.address)).toBe(true)
+    }
+  })
+
   // keep last: moves blockchain time forward
   it('jetton overpay tail can get stuck; marketplace rescues it with op 555 after 10 min', async () => {
     const nft = await mintNft('J2')

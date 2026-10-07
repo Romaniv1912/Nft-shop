@@ -105,6 +105,7 @@ function percentToInt(p: number) {
 export type SaleConfig = {
   marketplaceAddress: Address // address stored in data (must be the deployer for deploy_jetton)
   nftAddress: Address
+  nftOwnerAddress?: Address | null // set when deployed via Getgems deployer (no ownership_assigned)
   fullTonPrice: bigint
   feeAddress: Address
   feePercent: number // in %
@@ -119,7 +120,7 @@ export function buildSaleData(cfg: SaleConfig) {
   return beginCell()
     .storeBit(false) // is_complete
     .storeAddress(cfg.marketplaceAddress)
-    .storeAddress(null) // nft_owner_address — set by ownership_assigned
+    .storeAddress(cfg.nftOwnerAddress ?? null) // null → set later by ownership_assigned
     .storeCoins(cfg.fullTonPrice)
     .storeUint(0, 32) // sold_at
     .storeUint(0, 64) // sold_query_id
@@ -231,15 +232,36 @@ export function nftTransferBody(opts: {
   newOwner: Address
   responseTo: Address | null
   forwardAmount: bigint
+  rawForwardPayload?: Cell // stored as-is (no Either bit), as the Getgems deployer expects
 }) {
-  return beginCell()
+  const b = beginCell()
     .storeUint(OP.NFT_TRANSFER, 32)
     .storeUint(opts.queryId, 64)
     .storeAddress(opts.newOwner)
     .storeAddress(opts.responseTo)
     .storeBit(false) // custom_payload
     .storeCoins(opts.forwardAmount)
-    .storeBit(false) // forward_payload in-place, empty
+  if (opts.rawForwardPayload) b.storeSlice(opts.rawForwardPayload.beginParse())
+  else b.storeBit(false) // forward_payload in-place, empty
+  return b.endCell()
+}
+
+// ---------------- Getgems deployer ----------------
+// sources/deployer/deployer.fc in getgems-io/nft-contracts. The seller transfers the NFT to the
+// deployer; ownership_assigned carries (do_sale, ^sale_state_init, ^sale_deploy_body). The deployer
+// deploys the sale (it becomes `marketplace_address` in data, so it may send deploy_jetton) and
+// forwards the NFT to it.
+export const GETGEMS_DEPLOYER = {
+  mainnet: 'EQAIFunALREOeQ99syMbO6sSzM_Fa1RsPD5TBoS0qVeKQ-AR',
+  testnet: 'EQDZwUjVjK__PvChXCvtCMshBT1hrPKMwzRhyTAtonUbL2M3',
+} as const
+export const OP_DEPLOYER_DO_SALE = 0x0fe0ede
+
+export function deployerDoSalePayload(saleInit: StateInit, saleDeployBody: Cell) {
+  return beginCell()
+    .storeUint(OP_DEPLOYER_DO_SALE, 32)
+    .storeRef(beginCell().store(storeStateInit(saleInit)).endCell())
+    .storeRef(saleDeployBody)
     .endCell()
 }
 
