@@ -15,11 +15,14 @@ import {
 } from '../lib/contracts'
 
 // Getgems marketplace parameters from https://github.com/getgems-io/nft-contracts#readme (mainnet)
-const GETGEMS = {
+const GETGEMS_MAINNET = {
   marketplace: 'EQBYTuYbLf8INxFtD8tQeNk5ZLy-nAX9ahQbG_yl1qQ-GEMS',
   feeAddress: 'EQCjk1hh952vWaE9bRguFkAhDAL5jj3xj9p0uPWrFBq_GEMS',
-  feePercent: '5',
+  feePercent: 5,
 }
+// Testnet addresses are not published; take them from the example testnet
+// fixprice-v4r1 sale linked in the Getgems readme.
+export const GETGEMS_TESTNET_REFERENCE_SALE = 'kQDiSfanFAN3IUZ6wIKy3KHo-inSdWU8oc0BI8TZPYUzNMRJ'
 
 export function CreateSaleTab({ nft, onCreated }: { nft: string; onCreated: () => void }) {
   const { wallet, api, fmt, jettons, send, addSale, network } = useApp()
@@ -29,14 +32,47 @@ export function CreateSaleTab({ nft, onCreated }: { nft: string; onCreated: () =
 
   const [tonPrice, setTonPrice] = useState('1')
   const [jPrices, setJPrices] = useState<Record<string, string>>({})
-  const [marketplace, setMarketplace] = useState(GETGEMS.marketplace)
-  const [feeAddr, setFeeAddr] = useState(GETGEMS.feeAddress)
-  const [feePct, setFeePct] = useState(GETGEMS.feePercent)
-  const isGetgems = marketplace === GETGEMS.marketplace && feeAddr === GETGEMS.feeAddress && feePct === GETGEMS.feePercent
-  const applyPreset = (getgems: boolean) => {
-    setMarketplace(getgems ? GETGEMS.marketplace : '')
-    setFeeAddr(getgems ? GETGEMS.feeAddress : '')
-    setFeePct(GETGEMS.feePercent)
+  const [marketplace, setMarketplace] = useState('')
+  const [feeAddr, setFeeAddr] = useState('')
+  const [feePct, setFeePct] = useState('5')
+  const [preset, setPreset] = useState<'getgems' | 'own' | 'custom'>('getgems')
+  const [copyFrom, setCopyFrom] = useState('')
+
+  const getgems = useAsync(async () => {
+    if (network === 'mainnet') {
+      return { ...GETGEMS_MAINNET, source: 'README getgems-io/nft-contracts' }
+    }
+    const d = await api.getSaleData(Address.parse(GETGEMS_TESTNET_REFERENCE_SALE))
+    if (!d.feeAddress) throw new Error('У референсному продажі немає адреси комісії')
+    return {
+      marketplace: fmt(d.marketplaceAddress),
+      feeAddress: fmt(d.feeAddress),
+      feePercent: d.feePercent,
+      source: `тестовий продаж Getgems ${GETGEMS_TESTNET_REFERENCE_SALE}`,
+    }
+  }, [network, api])
+
+  useEffect(() => {
+    if (preset === 'getgems' && getgems.data) {
+      setMarketplace(fmt(Address.parse(getgems.data.marketplace)))
+      setFeeAddr(fmt(Address.parse(getgems.data.feeAddress)))
+      setFeePct(String(getgems.data.feePercent))
+    }
+    if (preset === 'own') {
+      setMarketplace('')
+      setFeeAddr('')
+      setFeePct('5')
+    }
+  }, [preset, getgems.data, fmt])
+
+  async function copyFromSale() {
+    const a = parseAddr(copyFrom)
+    if (!a) throw new Error('Невірна адреса продажу')
+    const d = await api.getSaleData(a)
+    setPreset('custom')
+    setMarketplace(fmt(d.marketplaceAddress))
+    setFeeAddr(d.feeAddress ? fmt(d.feeAddress) : '')
+    setFeePct(String(d.feePercent))
   }
   const [royaltyAddr, setRoyaltyAddr] = useState('')
   const [royaltyPct, setRoyaltyPct] = useState('0')
@@ -65,6 +101,7 @@ export function CreateSaleTab({ nft, onCreated }: { nft: string; onCreated: () =
   async function create() {
     if (!wallet) throw new Error('Підключіть гаманець')
     if (!nftAddr) throw new Error('Невірна адреса NFT')
+    if (preset === 'getgems' && !getgems.data) throw new Error('Параметри Getgems ще не завантажені — оновіть пресет')
     const mp = marketplace ? parseAddr(marketplace) : wallet
     const fee = feeAddr ? parseAddr(feeAddr) : wallet
     const roy = royaltyAddr ? parseAddr(royaltyAddr) : wallet
@@ -157,29 +194,38 @@ export function CreateSaleTab({ nft, onCreated }: { nft: string; onCreated: () =
 
         <h4>Маркетплейс, комісія, роялті</h4>
         <div className="row">
-          <button className={`chip ${isGetgems ? 'active' : ''}`} onClick={() => applyPreset(true)}>Getgems</button>
-          <button className={`chip ${!marketplace && !feeAddr ? 'active' : ''}`} onClick={() => applyPreset(false)}>Мій гаманець</button>
+          <button className={`chip ${preset === 'getgems' ? 'active' : ''}`} onClick={() => { setPreset('getgems'); getgems.reload() }}>Getgems</button>
+          <button className={`chip ${preset === 'own' ? 'active' : ''}`} onClick={() => setPreset('own')}>Мій гаманець</button>
         </div>
-        {isGetgems && (
+        {preset === 'getgems' && (
           <p className="muted small">
-            Маркетплейс і комісія 5% — адреси Getgems, як у їхньому деплої: контракт деплоїть ваш гаманець, а маркетплейсом
-            стає Getgems. Скасувати продаж зможете ви як продавець; op 555 буде доступний лише Getgems. Getgems показує
-            ціни тільки в підтримуваних ним жетонах (USD₮, NOT тощо).
-            {network === 'testnet' && (
-              <b> Це адреси mainnet — адрес Getgems для testnet у їхньому репозиторії немає, тож на testnet.getgems.io такий продаж може не відобразитись.</b>
+            {getgems.loading && 'Читаю параметри Getgems…'}
+            {getgems.error && <span className="bad-text">Не вдалося прочитати параметри Getgems: {getgems.error}</span>}
+            {getgems.data && (
+              <>
+                Маркетплейс і комісія {getgems.data.feePercent}% — як у Getgems (джерело: {getgems.data.source}). Контракт
+                деплоїть ваш гаманець, а маркетплейсом стає Getgems. Скасувати продаж зможете ви як продавець; op 555 буде
+                доступний лише Getgems. Getgems показує ціни тільки в підтримуваних ним жетонах.
+              </>
             )}
           </p>
         )}
+        <div className="row end">
+          <Field label="Або скопіювати маркетплейс і комісію з будь-якого продажу v4r1">
+            <input value={copyFrom} onChange={(e) => setCopyFrom(e.target.value)} placeholder="адреса контракту продажу" />
+          </Field>
+          <Btn kind="secondary" onClick={copyFromSale}>Скопіювати</Btn>
+        </div>
         <div className="row">
           <Field label="Адреса маркетплейсу" hint="може скасувати продаж і виконувати op 555. Порожньо = ваш гаманець">
-            <input value={marketplace} onChange={(e) => setMarketplace(e.target.value)} placeholder={wallet ? fmt(wallet) : ''} />
+            <input value={marketplace} onChange={(e) => { setPreset('custom'); setMarketplace(e.target.value) }} placeholder={wallet ? fmt(wallet) : ''} />
           </Field>
         </div>
         <div className="row">
           <Field label="Адреса комісії" hint="порожньо = ваш гаманець">
-            <input value={feeAddr} onChange={(e) => setFeeAddr(e.target.value)} placeholder={wallet ? fmt(wallet) : ''} />
+            <input value={feeAddr} onChange={(e) => { setPreset('custom'); setFeeAddr(e.target.value) }} placeholder={wallet ? fmt(wallet) : ''} />
           </Field>
-          <Field label="Комісія, %"><input value={feePct} onChange={(e) => setFeePct(e.target.value)} /></Field>
+          <Field label="Комісія, %"><input value={feePct} onChange={(e) => { setPreset('custom'); setFeePct(e.target.value) }} /></Field>
         </div>
         <div className="row">
           <Field label="Адреса роялті" hint="підставляється з royalty_params NFT">
