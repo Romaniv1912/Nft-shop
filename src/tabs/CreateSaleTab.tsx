@@ -14,17 +14,30 @@ import {
   stateInitBoc,
 } from '../lib/contracts'
 
+// Getgems marketplace parameters from https://github.com/getgems-io/nft-contracts#readme (mainnet)
+const GETGEMS = {
+  marketplace: 'EQBYTuYbLf8INxFtD8tQeNk5ZLy-nAX9ahQbG_yl1qQ-GEMS',
+  feeAddress: 'EQCjk1hh952vWaE9bRguFkAhDAL5jj3xj9p0uPWrFBq_GEMS',
+  feePercent: '5',
+}
+
 export function CreateSaleTab({ nft, onCreated }: { nft: string; onCreated: () => void }) {
-  const { wallet, api, fmt, jettons, send, addSale } = useApp()
+  const { wallet, api, fmt, jettons, send, addSale, network } = useApp()
   const [nftStr, setNftStr] = useState(nft)
   useEffect(() => setNftStr(nft), [nft])
   const nftAddr = parseAddr(nftStr)
 
   const [tonPrice, setTonPrice] = useState('1')
   const [jPrices, setJPrices] = useState<Record<string, string>>({})
-  const [marketplace, setMarketplace] = useState('')
-  const [feeAddr, setFeeAddr] = useState('')
-  const [feePct, setFeePct] = useState('5')
+  const [marketplace, setMarketplace] = useState(GETGEMS.marketplace)
+  const [feeAddr, setFeeAddr] = useState(GETGEMS.feeAddress)
+  const [feePct, setFeePct] = useState(GETGEMS.feePercent)
+  const isGetgems = marketplace === GETGEMS.marketplace && feeAddr === GETGEMS.feeAddress && feePct === GETGEMS.feePercent
+  const applyPreset = (getgems: boolean) => {
+    setMarketplace(getgems ? GETGEMS.marketplace : '')
+    setFeeAddr(getgems ? GETGEMS.feeAddress : '')
+    setFeePct(GETGEMS.feePercent)
+  }
   const [royaltyAddr, setRoyaltyAddr] = useState('')
   const [royaltyPct, setRoyaltyPct] = useState('0')
   const [deployMode, setDeployMode] = useState<'auto' | 'blank' | 'jetton'>('auto')
@@ -143,6 +156,20 @@ export function CreateSaleTab({ nft, onCreated }: { nft: string; onCreated: () =
         ))}
 
         <h4>Маркетплейс, комісія, роялті</h4>
+        <div className="row">
+          <button className={`chip ${isGetgems ? 'active' : ''}`} onClick={() => applyPreset(true)}>Getgems</button>
+          <button className={`chip ${!marketplace && !feeAddr ? 'active' : ''}`} onClick={() => applyPreset(false)}>Мій гаманець</button>
+        </div>
+        {isGetgems && (
+          <p className="muted small">
+            Маркетплейс і комісія 5% — адреси Getgems, як у їхньому деплої: контракт деплоїть ваш гаманець, а маркетплейсом
+            стає Getgems. Скасувати продаж зможете ви як продавець; op 555 буде доступний лише Getgems. Getgems показує
+            ціни тільки в підтримуваних ним жетонах (USD₮, NOT тощо).
+            {network === 'testnet' && (
+              <b> Це адреси mainnet — адрес Getgems для testnet у їхньому репозиторії немає, тож на testnet.getgems.io такий продаж може не відобразитись.</b>
+            )}
+          </p>
+        )}
         <div className="row">
           <Field label="Адреса маркетплейсу" hint="може скасувати продаж і виконувати op 555. Порожньо = ваш гаманець">
             <input value={marketplace} onChange={(e) => setMarketplace(e.target.value)} placeholder={wallet ? fmt(wallet) : ''} />
