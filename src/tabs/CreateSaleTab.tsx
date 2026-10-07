@@ -20,9 +20,12 @@ const GETGEMS_MAINNET = {
   feeAddress: 'EQCjk1hh952vWaE9bRguFkAhDAL5jj3xj9p0uPWrFBq_GEMS',
   feePercent: 5,
 }
-// Testnet addresses are not published; take them from the example testnet
-// fixprice-v4r1 sale linked in the Getgems readme.
-export const GETGEMS_TESTNET_REFERENCE_SALE = 'kQDiSfanFAN3IUZ6wIKy3KHo-inSdWU8oc0BI8TZPYUzNMRJ'
+// Getgems testnet marketplace parameters
+const GETGEMS_TESTNET = {
+  marketplace: 'kQBZp2tZ9WUZQP8AgL2gUHkdJQe-8NyAcFksn3L7dcZxYJkN',
+  feeAddress: 'kQC1kDpUayI56PGs1s54n3z7CtDQ6Bl3Uscf_GQ1H01OeQX6',
+  feePercent: 5,
+}
 
 export function CreateSaleTab({ nft, onCreated }: { nft: string; onCreated: () => void }) {
   const { wallet, api, fmt, jettons, send, addSale, network } = useApp()
@@ -38,19 +41,13 @@ export function CreateSaleTab({ nft, onCreated }: { nft: string; onCreated: () =
   const [preset, setPreset] = useState<'getgems' | 'own' | 'custom'>('getgems')
   const [copyFrom, setCopyFrom] = useState('')
 
-  const getgems = useAsync(async () => {
-    if (network === 'mainnet') {
-      return { ...GETGEMS_MAINNET, source: 'README getgems-io/nft-contracts' }
-    }
-    const d = await api.getSaleData(Address.parse(GETGEMS_TESTNET_REFERENCE_SALE))
-    if (!d.feeAddress) throw new Error('У референсному продажі немає адреси комісії')
-    return {
-      marketplace: fmt(d.marketplaceAddress),
-      feeAddress: fmt(d.feeAddress),
-      feePercent: d.feePercent,
-      source: `тестовий продаж Getgems ${GETGEMS_TESTNET_REFERENCE_SALE}`,
-    }
-  }, [network, api])
+  const getgems = useAsync(
+    async () =>
+      network === 'mainnet'
+        ? GETGEMS_MAINNET
+        : GETGEMS_TESTNET,
+    [network],
+  )
 
   useEffect(() => {
     if (preset === 'getgems' && getgems.data) {
@@ -203,7 +200,7 @@ export function CreateSaleTab({ nft, onCreated }: { nft: string; onCreated: () =
             {getgems.error && <span className="bad-text">Не вдалося прочитати параметри Getgems: {getgems.error}</span>}
             {getgems.data && (
               <>
-                Маркетплейс і комісія {getgems.data.feePercent}% — як у Getgems (джерело: {getgems.data.source}). Контракт
+                Маркетплейс і комісія {getgems.data.feePercent}% — як у Getgems ({network}). Контракт
                 деплоїть ваш гаманець, а маркетплейсом стає Getgems. Скасувати продаж зможете ви як продавець; op 555 буде
                 доступний лише Getgems. Getgems показує ціни тільки в підтримуваних ним жетонах.
               </>
