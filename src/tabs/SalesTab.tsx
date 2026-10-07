@@ -51,6 +51,11 @@ export function SalesTab() {
   )
 }
 
+function getgemsNftUrl(network: string, nft: string, collection: string | null) {
+  const host = network === 'testnet' ? 'https://testnet.getgems.io' : 'https://getgems.io'
+  return collection ? `${host}/collection/${collection}/${nft}` : `${host}/nft/${nft}`
+}
+
 type SaleJetton = { master: Address; wallet: Address; balance: bigint }
 
 function statusOf(d: { isComplete: boolean; nftOwnerAddress: Address | null; soldAt: number }) {
@@ -61,7 +66,7 @@ function statusOf(d: { isComplete: boolean; nftOwnerAddress: Address | null; sol
 }
 
 function SaleCard({ saved }: { saved: SavedSale }) {
-  const { api, wallet, jettons, send, removeSale } = useApp()
+  const { api, wallet, jettons, send, removeSale, network } = useApp()
   const sale = Address.parse(saved.address)
 
   const st = useAsync(async () => {
@@ -109,6 +114,16 @@ function SaleCard({ saved }: { saved: SavedSale }) {
       }
       actions={
         <>
+          {d && (
+            <a
+              className="btn secondary"
+              href={getgemsNftUrl(network, d.nftAddress.toString(), nft?.collection?.toString() ?? null)}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Getgems ↗
+            </a>
+          )}
           <Btn kind="secondary" onClick={st.reload}>Оновити</Btn>
           <button className="link" onClick={() => removeSale(saved.address)}>прибрати</button>
         </>
