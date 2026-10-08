@@ -25,7 +25,7 @@ const GETGEMS_MAINNET = {
 // Getgems testnet marketplace parameters
 const GETGEMS_TESTNET = {
   marketplace: 'kQBZp2tZ9WUZQP8AgL2gUHkdJQe-8NyAcFksn3L7dcZxYJkN',
-  feeAddress: 'kQC1kDpUayI56PGs1s54n3z7CtDQ6Bl3Uscf_GQ1H01OeQX6',
+  feeAddress: '0QD4FPq-PRDieyQKkizFTRtSDyucUIqrj0v_zXJmqaDp6xti',
   feePercent: 5,
 }
 

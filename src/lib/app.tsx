@@ -42,7 +42,10 @@ const PRESET_JETTONS: Record<Network, KnownJetton[]> = {
     { master: 'EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs', symbol: 'USD₮', name: 'Tether USD', decimals: 6 },
     { master: 'EQAvlWFDxGF2lXm67y4yzC17wYKD9A0guwPkMs1gOsM__NOT', symbol: 'NOT', name: 'Notcoin', decimals: 9 },
   ],
-  testnet: [],
+  testnet: [
+    // VAT — coin offered by testnet.getgems.io (decimals are re-read from the chain on load)
+    { master: 'kQCS5aGrvaF7T-xFlr3uLa_U5FATJagurEvok3BF4kJE7nyn', symbol: 'VAT', name: 'VAT', decimals: 9 },
+  ],
 }
 
 export type Msg = { to: Address; value: bigint; body?: Cell | null; init?: string }
@@ -88,6 +91,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const api = useMemo(() => new Api(network, apiKey), [network, apiKey])
 
+  // verify symbol/decimals of preset jettons on-chain so prices are shown in correct units
+  const [presetMeta, setPresetMeta] = useState<Record<string, Partial<KnownJetton>>>({})
+  useEffect(() => {
+    let alive = true
+    for (const j of PRESET_JETTONS[network]) {
+      api.getJettonMeta(Address.parse(j.master)).then(
+        ({ meta }) => {
+          if (!alive) return
+          const upd: Partial<KnownJetton> = {}
+          if (meta.decimals && !Number.isNaN(Number(meta.decimals))) upd.decimals = Number(meta.decimals)
+          if (meta.symbol) upd.symbol = meta.symbol
+          if (meta.name) upd.name = meta.name
+          setPresetMeta((m) => ({ ...m, [j.master]: upd }))
+        },
+        () => undefined,
+      )
+    }
+    return () => {
+      alive = false
+    }
+  }, [network, api])
+
   const fmt = useCallback(
     (a: Address | null | undefined, opts?: { bounceable?: boolean }) =>
       a ? a.toString({ testOnly: network === 'testnet', bounceable: opts?.bounceable ?? true, urlSafe: true }) : '—',
@@ -100,7 +125,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   )
 
   const jettons = useMemo(() => {
-    const all = [...PRESET_JETTONS[network], ...ownJettons]
+    const presets = PRESET_JETTONS[network].map((j) => ({ ...j, ...presetMeta[j.master] }))
+    const all = [...presets, ...ownJettons]
     const seen = new Set<string>()
     return all.filter((j) => {
       const k = Address.parse(j.master).toRawString()
@@ -108,7 +134,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       seen.add(k)
       return true
     })
-  }, [network, ownJettons])
+  }, [network, ownJettons, presetMeta])
 
   const log = useCallback((e: Omit<LogEntry, 'time'>) => setLogs((l) => [{ ...e, time: Date.now() }, ...l].slice(0, 200)), [setLogs])
 
